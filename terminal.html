@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Chun-Li Terminal</title>
+  <style>
+    :root {
+      --term-color: #00ff88;
+      --term-bg: #000000;
+    }
+    body { 
+      background: var(--term-bg); 
+      color: var(--term-color); 
+      font-family: 'Courier New', Courier, monospace; 
+      padding: 0; 
+      margin: 0;
+      overflow: hidden;
+    }
+    #terminal-container {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    #output { 
+      white-space: pre-line; 
+      overflow-y: auto; 
+      flex-grow: 1;
+      scrollbar-width: thin;
+      scrollbar-color: var(--term-color) transparent;
+    }
+    #input-line {
+      display: flex;
+      align-items: center;
+      margin-top: 10px;
+      flex-shrink: 0;
+      border-top: 1px solid rgba(0, 255, 136, 0.2);
+      padding-top: 10px;
+    }
+    #prompt {
+      white-space: nowrap;
+      color: var(--term-color);
+      margin-right: 10px;
+      font-weight: bold;
+    }
+    input { 
+      background: transparent; 
+      color: var(--term-color); 
+      border: none; 
+      outline: none; 
+      flex-grow: 1;
+      font-family: inherit;
+      font-size: 16px;
+      padding: 0;
+      margin: 0;
+    }
+    #help-hint {
+      font-size: 12px;
+      opacity: 0.5;
+      margin-top: 5px;
+    }
+    #matrixCanvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: none;
+      z-index: 999;
+    }
+    pre { 
+      margin: 0; 
+      line-height: 1.1; 
+      font-size: 12px; 
+      text-shadow: 0 0 5px var(--term-color);
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="matrixCanvas"></canvas>
+
+<div id="terminal-container">
+  <div id="output"></div>
+  <div id="input-line">
+    <div id="prompt">user@terminal:~$</div>
+    <input id="input" autofocus spellcheck="false">
+  </div>
+  <div id="help-hint">Tip: Type 'help' to see available commands</div>
+</div>
+
+<script>
+const output = document.getElementById("output");
+const input = document.getElementById("input");
+const promptEle = document.getElementById("prompt");
+const canvas = document.getElementById("matrixCanvas");
+const ctx = canvas.getContext("2d");
+const root = document.documentElement;
+
+let history = [];
+let historyIndex = -1;
+let userName = localStorage.getItem("termUserName") || "user";
+
+const themes = {
+  hacker: { color: "#00ff88", bg: "#000000" },
+  retro: { color: "#ffb000", bg: "#282828" },
+  synthwave: { color: "#ff7edb", bg: "#2d0b3d" },
+  light: { color: "#000000", bg: "#ffffff" },
+  blood: { color: "#ff4444", bg: "#1a0000" },
+  ocean: { color: "#00d4ff", bg: "#001524" }
+};
+
+function applyTheme(color, bg = "#000000", save = true) {
+  root.style.setProperty('--term-color', color);
+  root.style.setProperty('--term-bg', bg);
+  if(save) {
+      localStorage.setItem("termColor", color);
+      localStorage.setItem("termBg", bg);
+  }
+}
+
+if(localStorage.getItem("termColor")) {
+    applyTheme(localStorage.getItem("termColor"), localStorage.getItem("termBg"), false);
+}
+promptEle.innerText = `${userName}@terminal:~$`;
+
+const banner = `
+<pre>
+           ___  ____             \\ | /
+         /' --;^/ ,-_\\          --(_)--
+        / / --o\\ o-\\ \\\\         / | \\
+       /-/-/|o|-|\\-\\\\|\\\\
+        '\`  \` |-|   \`\` '
+              |-|        ██████╗ ██   ██╗██╗   ██╗███╗   ██╗      ██╗     ██╗
+              |-|O       ██╔════╝██║  ██║██║   ██║████╗  ██║      ██║     ██║
+              |-(\\,__    ██║     ███████║██║   ██║██╔██╗ ██║█████╗██║     ██║
+           ...|-|\\--,\\_  ██║     ██╔══██║██║   ██║██║╚██╗██║╚════╝██║     ██║
+      ,;;;;;;;;;;;;;;;;; ╚██████╗██║  ██║╚██████╔╝██║ ╚████║      ███████╗██║ ;.
+~~,;;;;;;;;;;;;;;;;;;;;;  ╚═════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝      ╚══════╝  ;;;,~~
+~;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;~
+</pre>
+<p>Welcome back, <b>${userName}</b>. Island systems online.</p>
+`;
+output.innerHTML = banner;
+
+// --- GAME STATE VARIABLES ---
+let gameState = "idle", rpsState = false, rpsDifficulty = false, hangmanState = false, weatherState = false;
+let maxNumber, numberToGuess, triesLeft, playerScore, cpuScore, scoreToWin, hWord, hDisplay, hTries;
+const rpsChoices = ["rock","paper","scissors"];
+const hWords = ["terminal", "javascript", "chunli", "fighter", "compiler", "hacking", "matrix"];
+const API_KEY = "ead7968fb3c99b7a34420b16a19338ac";
+
+function print(msg) {
+  output.innerHTML += `\n${msg}`;
+  output.scrollTop = output.scrollHeight;
+}
+
+function getStickman(tries) {
+  const stages = ["  O  \n /|\\ \n / \\ ","  O  \n /|\\ \n /   ","  O  \n /|\\ \n     ","  O  \n /|  \n     ","  O  \n  |  \n     ","  O  \n     \n     ","     \n     \n     "];
+  return stages[6 - tries];
+}
+
+input.addEventListener("keydown", function(e){
+  if(e.key === "Enter"){
+    let cmd = input.value.trim();
+    if(cmd) { history.push(cmd); historyIndex = history.length; }
+    let lowerCmd = cmd.toLowerCase();
+    output.innerHTML += `\n<span style="opacity:0.6">${userName}@terminal:~$</span> ${cmd}`;
+    handleCommand(lowerCmd, cmd);
+    input.value="";
+    output.scrollTop = output.scrollHeight;
+  }
+  else if(e.key === "ArrowUp" && historyIndex > 0) { historyIndex--; input.value = history[historyIndex]; e.preventDefault(); }
+  else if(e.key === "ArrowDown" && historyIndex < history.length - 1) { historyIndex++; input.value = history[historyIndex]; e.preventDefault(); }
+});
+
+function handleCommand(cmd, original) {
+  // WEATHER INPUT
+  if(weatherState){
+    print("<i>[SYSTEM] Establishing connection to weather satellite...</i>");
+    fetch(`https://api.openweathermap.org/data/2.5/weather?q=${cmd}&units=metric&appid=${API_KEY}`)
+      .then(res => res.json()).then(data => {
+        print(`<b>Weather Report: ${data.name}</b>`);
+        print(`> Temperature: ${data.main.temp}°C`);
+        print(`> Condition: ${data.weather[0].description}`);
+        print(`> Humidity: ${data.main.humidity}%`);
+        print(`> Wind Speed: ${data.wind.speed} m/s`);
+        weatherState = false;
+      }).catch(() => { print("Error: Target city unreachable."); weatherState = false; });
+    return;
+  }
+
+  // GAME 2: RPS DIFFICULTY
+  if(rpsDifficulty){
+    if(["easy","normal","hard"].includes(cmd)){
+      scoreToWin = cmd === "easy"?3:cmd==="normal"?5:7;
+      playerScore = 0; cpuScore = 0; rpsState = true; rpsDifficulty = false;
+      print(`Match to ${scoreToWin}. Enter: rock, paper, or scissors?`);
+    } else print("Invalid difficulty. Choose: easy/normal/hard");
+    return;
+  }
+
+  // GAME 2: RPS PLAYING
+  if(rpsState){
+    if(!rpsChoices.includes(cmd)) { print("Invalid choice. Enter: rock, paper, or scissors"); return; }
+    let cpu = rpsChoices[Math.floor(Math.random()*3)];
+    print(`You: ${cmd} | CPU: ${cpu}`);
+    if(cmd!==cpu && ((cmd==="rock"&&cpu==="scissors")||(cmd==="paper"&&cpu==="rock")||(cmd==="scissors"&&cpu==="paper"))) {
+      playerScore++;
+      print("Point to you!");
+    }
+    else if(cmd!==cpu) {
+      cpuScore++;
+      print("CPU scores!");
+    } else {
+      print("It's a tie!");
+    }
+    print(`Score: You [${playerScore}] - CPU [${cpuScore}]`);
+    if(playerScore>=scoreToWin || cpuScore>=scoreToWin){ 
+        print(playerScore>=scoreToWin?"\n🏆 VICTORY! Match over.":"\n💀 DEFEAT! Match over."); 
+        rpsState=false; 
+    }
+    return;
+  }
+
+  // GAME 1: GUESSING DIFFICULTY
+  if(gameState==="difficulty"){
+    if(cmd==="easy"){ maxNumber=10; triesLeft=5; }
+    else if(cmd==="normal"){ maxNumber=50; triesLeft=7; }
+    else if(cmd==="hard"){ maxNumber=100; triesLeft=5; }
+    else { print("Choose: easy/normal/hard"); return; }
+    numberToGuess = Math.floor(Math.random()*maxNumber)+1;
+    gameState="playing"; print(`I'm thinking of a number between 1-${maxNumber}. You have ${triesLeft} tries.`);
+    return;
+  }
+
+  // GAME 1: GUESSING PLAYING
+  if(gameState==="playing" && !isNaN(cmd)){
+    let guess = parseInt(cmd); triesLeft--;
+    if(guess === numberToGuess){ print("🎉 Data Match! Correct."); gameState="idle"; }
+    else if(triesLeft<=0){ print(`💀 Link Lost! The number was ${numberToGuess}.`); gameState="idle"; }
+    else print((guess > numberToGuess ? "Too high." : "Too low.") + ` [${triesLeft} attempts left]`);
+    return;
+  }
+
+  // GAME 3: HANGMAN PLAYING
+  if(hangmanState){
+    if(cmd === hWord){ 
+        print(`🎉 ACCESS GRANTED! The word was ${hWord.toUpperCase()}.`); 
+        hangmanState = false; 
+    } else { 
+      hTries--; 
+      print(`<pre>${getStickman(hTries)}</pre>`); 
+      if(hTries<=0){ 
+          print(`💀 SYSTEM CRASH! The word was ${hWord.toUpperCase()}.`); 
+          hangmanState=false; 
+      } else {
+          print(`Incorrect guess. Tries left: ${hTries}`);
+      }
+    }
+    return;
+  }
+
+  // STANDARD COMMANDS
+  if(cmd.startsWith("hostname ")) {
+      let newName = original.split(" ")[1];
+      if(newName) {
+          userName = newName;
+          localStorage.setItem("termUserName", userName);
+          promptEle.innerText = `${userName}@terminal:~$`;
+          print(`Identity confirmed. Welcome, ${userName}.`);
+      }
+  }
+  else if(cmd === "theme") {
+    print(`Available Presets: ${Object.keys(themes).join(", ")}`);
+    print(`Usage: theme [name] OR theme [#hexcode]`);
+  }
+  else if(cmd.startsWith("theme ")){
+    let choice = cmd.split(" ")[1];
+    if(themes[choice]){ applyTheme(themes[choice].color, themes[choice].bg); print(`Neural link established. Theme: ${choice}.`); }
+    else if(choice.startsWith("#")){ applyTheme(choice); print(`Custom frequency ${choice} applied.`); }
+  }
+  else if(cmd==="help"){
+    print(`<b>SYSTEM COMMANDS:</b>`);
+    print(`- help: Display this menu`);
+    print(`- clear: Reset terminal buffer`);
+    print(`- matrix: Toggle digital rain`);
+    print(`- theme: Change visual interface`);
+    print(`- hostname [name]: Update user ID`);
+    print(`- weather: Fetch global weather data`);
+    print(`- weatherloc: Auto-detect local weather`);
+    print(`- game1: Number Guessing`);
+    print(`- game2: Rock Paper Scissors`);
+    print(`- game3: Word Hangman`);
+  }
+  else if(cmd==="clear") output.innerHTML = banner;
+  else if(cmd==="matrix") startMatrix();
+  else if(cmd==="weather") { print("Target city name?"); weatherState = true; }
+  else if(cmd==="weatherloc"){
+    print("<i>[SYSTEM] Scanning GPS coordinates...</i>");
+    if(navigator.geolocation){
+        navigator.geolocation.getCurrentPosition(pos => {
+            fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&units=metric&appid=${API_KEY}`)
+            .then(res => res.json()).then(data => {
+                print(`<b>Local Weather: ${data.name}</b>`);
+                print(`> Temperature: ${data.main.temp}°C`);
+                print(`> Humidity: ${data.main.humidity}%`);
+                print(`> Wind Speed: ${data.wind.speed} m/s`);
+                print(`> Sky: ${data.weather[0].description}`);
+            });
+        }, () => print("Error: Location access denied."));
+    }
+  }
+  else if(cmd==="game1") { gameState="difficulty"; print("Launch [GUESS]. Select difficulty: easy/normal/hard"); }
+  else if(cmd==="game2") { rpsDifficulty=true; print("Launch [RPS]. Select difficulty: easy/normal/hard"); }
+  else if(cmd==="game3") {
+    hWord = hWords[Math.floor(Math.random()*hWords.length)]; hTries=6;
+    hDisplay = hWord.split('').map((l,i)=>i%2==0?l:"_").join(" ");
+    print(`Launch [HANGMAN]. Solve: ${hDisplay}`);
+    print(`<pre>${getStickman(6)}</pre>`);
+    hangmanState = true;
+  }
+  else print("Command not recognized. Type 'help' for options.");
+}
+
+function startMatrix() {
+    canvas.style.display = "block";
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    const fontSize = 16;
+    const columns = canvas.width / fontSize;
+    const drops = Array(Math.floor(columns)).fill(1);
+    function draw() {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.05)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = getComputedStyle(root).getPropertyValue('--term-color');
+        ctx.font = fontSize + "px monospace";
+        drops.forEach((y, i) => {
+            const text = chars[Math.floor(Math.random()*chars.length)];
+            ctx.fillText(text, i * fontSize, y * fontSize);
+            if (y * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0;
+            drops[i]++;
+        });
+    }
+    matrixInterval = setInterval(draw, 33);
+    canvas.onclick = () => { clearInterval(matrixInterval); canvas.style.display = "none"; };
+}
+
+document.addEventListener("click", () => input.focus());
+</script>
+</body>
+</html>
