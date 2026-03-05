@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>Chun-Li Terminal</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     :root {
       --term-color: #00ff88;
@@ -61,17 +62,11 @@
     }
     #matrixCanvas {
       position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      display: none;
-      z-index: 999;
+      top: 0; left: 0; width: 100%; height: 100%;
+      display: none; z-index: 999;
     }
     pre { 
-      margin: 0; 
-      line-height: 1.1; 
-      font-size: 12px; 
+      margin: 0; line-height: 1.1; font-size: 12px; 
       text-shadow: 0 0 5px var(--term-color);
     }
   </style>
@@ -86,10 +81,15 @@
     <div id="prompt">user@terminal:~$</div>
     <input id="input" autofocus spellcheck="false">
   </div>
-  <div id="help-hint">Tip: Type 'help' to see available commands</div>
+  <div id="help-hint">Auth: register [email] [pass] | login [email] [pass] | logout</div>
 </div>
 
 <script>
+// ===== SUPABASE SETUP =====
+const SUPABASE_URL = 'https://cjtyurzritcphytubvbe.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_BzCqh6HwEfBJ9fxW6H2Qzw_hW_XgJq5';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
 const output = document.getElementById("output");
 const input = document.getElementById("input");
 const promptEle = document.getElementById("prompt");
@@ -99,6 +99,7 @@ const root = document.documentElement;
 
 let history = [];
 let historyIndex = -1;
+let currentUser = null;
 let userName = localStorage.getItem("termUserName") || "user";
 
 const themes = {
@@ -116,34 +117,33 @@ function applyTheme(color, bg = "#000000", save = true) {
   if(save) {
       localStorage.setItem("termColor", color);
       localStorage.setItem("termBg", bg);
+      syncProfile(); 
   }
 }
 
 if(localStorage.getItem("termColor")) {
     applyTheme(localStorage.getItem("termColor"), localStorage.getItem("termBg"), false);
 }
-promptEle.innerText = `${userName}@terminal:~$`;
 
 const banner = `
 <pre>
-           ___  ____             \\ | /
-         /' --;^/ ,-_\\          --(_)--
-        / / --o\\ o-\\ \\\\         / | \\
-       /-/-/|o|-|\\-\\\\|\\\\
-        '\`  \` |-|   \`\` '
-              |-|        ██████╗ ██   ██╗██╗   ██╗███╗   ██╗      ██╗     ██╗
-              |-|O       ██╔════╝██║  ██║██║   ██║████╗  ██║      ██║     ██║
-              |-(\\,__    ██║     ███████║██║   ██║██╔██╗ ██║█████╗██║     ██║
-           ...|-|\\--,\\_  ██║     ██╔══██║██║   ██║██║╚██╗██║╚════╝██║     ██║
-      ,;;;;;;;;;;;;;;;;; ╚██████╗██║  ██║╚██████╔╝██║ ╚████║      ███████╗██║ ;.
+            ___  ____             \\ | /
+          /' --;^/ ,-_\\          --(_)--
+         / / --o\\ o-\\ \\\\         / | \\
+        /-/-/|o|-|\\-\\\\|\\\\
+         '\`  \` |-|   \`\` '
+               |-|        ██████╗ ██   ██╗██╗   ██╗███╗   ██╗      ██╗     ██╗
+               |-|O       ██╔════╝██║  ██║██║   ██║████╗  ██║      ██║     ██║
+               |-(\\,__    ██║     ███████║██║   ██║██╔██╗ ██║█████╗██║     ██║
+            ...|-|\\--,\\_  ██║     ██╔══██║██║   ██║██║╚██╗██║╚════╝██║     ██║
+      ,;;;;;;;;;;;;;;;;; ╚██████╗ ██║  ██║╚██████╔╝██║ ╚████║      ███████╗██║ ;.
 ~~,;;;;;;;;;;;;;;;;;;;;;  ╚═════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝      ╚══════╝  ;;;,~~
 ~;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;~
 </pre>
-<p>Welcome back, <b>${userName}</b>. Island systems online.</p>
+<p>Welcome back, <b id="display-name">${userName}</b>. Island systems online.</p>
 `;
 output.innerHTML = banner;
 
-// --- GAME STATE VARIABLES ---
 let gameState = "idle", rpsState = false, rpsDifficulty = false, hangmanState = false, weatherState = false;
 let maxNumber, numberToGuess, triesLeft, playerScore, cpuScore, scoreToWin, hWord, hDisplay, hTries;
 const rpsChoices = ["rock","paper","scissors"];
@@ -160,6 +160,39 @@ function getStickman(tries) {
   return stages[6 - tries];
 }
 
+async function syncProfile() {
+  if (!currentUser) return;
+  const color = getComputedStyle(root).getPropertyValue('--term-color').trim();
+  await supabaseClient.from('profiles').upsert({ id: currentUser.id, username: userName, theme: color });
+}
+
+async function checkSession() {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (session) {
+    currentUser = session.user;
+    const { data } = await supabaseClient.from('profiles').select('*').eq('id', currentUser.id).single();
+    if (data) {
+      userName = data.username || "user";
+      if (data.theme) applyTheme(data.theme, "#000000", false);
+    }
+    promptEle.innerText = `${userName}@terminal:~$`;
+    const nameEl = document.getElementById("display-name");
+    if(nameEl) nameEl.innerText = userName;
+    print(`<i>[SYSTEM] Neural link restored for ${userName}.</i>`);
+  }
+}
+
+// WEATHER HELPER
+function fetchWeather(query) {
+  print("<i>[SYSTEM] Establishing connection to weather satellite...</i>");
+  fetch(`https://api.openweathermap.org/data/2.5/weather?${query}&units=metric&appid=${API_KEY}`)
+    .then(res => res.json()).then(data => {
+      print(`<b>Weather Report: ${data.name}</b>`);
+      print(`> Temperature: ${data.main.temp}°C`);
+      print(`> Condition: ${data.weather[0].description}`);
+    }).catch(() => { print("Error: Target unreachable."); });
+}
+
 input.addEventListener("keydown", function(e){
   if(e.key === "Enter"){
     let cmd = input.value.trim();
@@ -174,23 +207,32 @@ input.addEventListener("keydown", function(e){
   else if(e.key === "ArrowDown" && historyIndex < history.length - 1) { historyIndex++; input.value = history[historyIndex]; e.preventDefault(); }
 });
 
-function handleCommand(cmd, original) {
-  // WEATHER INPUT
-  if(weatherState){
-    print("<i>[SYSTEM] Establishing connection to weather satellite...</i>");
-    fetch(`https://api.openweathermap.org/data/2.5/weather?q=${cmd}&units=metric&appid=${API_KEY}`)
-      .then(res => res.json()).then(data => {
-        print(`<b>Weather Report: ${data.name}</b>`);
-        print(`> Temperature: ${data.main.temp}°C`);
-        print(`> Condition: ${data.weather[0].description}`);
-        print(`> Humidity: ${data.main.humidity}%`);
-        print(`> Wind Speed: ${data.wind.speed} m/s`);
-        weatherState = false;
-      }).catch(() => { print("Error: Target city unreachable."); weatherState = false; });
+async function handleCommand(cmd, original) {
+  const args = original.split(" ");
+
+  if (cmd.startsWith("register ")) {
+    const { error } = await supabaseClient.auth.signUp({ email: args[1], password: args[2] });
+    print(error ? `Error: ${error.message}` : "Success! Check your email for verification.");
+    return;
+  }
+  if (cmd.startsWith("login ")) {
+    const { error } = await supabaseClient.auth.signInWithPassword({ email: args[1], password: args[2] });
+    if (error) print(`Login failed: ${error.message}`);
+    else location.reload();
+    return;
+  }
+  if (cmd === "logout") {
+    await supabaseClient.auth.signOut();
+    location.reload();
     return;
   }
 
-  // GAME 2: RPS DIFFICULTY
+  if(weatherState){
+    fetchWeather(`q=${cmd}`);
+    weatherState = false;
+    return;
+  }
+
   if(rpsDifficulty){
     if(["easy","normal","hard"].includes(cmd)){
       scoreToWin = cmd === "easy"?3:cmd==="normal"?5:7;
@@ -200,21 +242,15 @@ function handleCommand(cmd, original) {
     return;
   }
 
-  // GAME 2: RPS PLAYING
   if(rpsState){
     if(!rpsChoices.includes(cmd)) { print("Invalid choice. Enter: rock, paper, or scissors"); return; }
     let cpu = rpsChoices[Math.floor(Math.random()*3)];
     print(`You: ${cmd} | CPU: ${cpu}`);
     if(cmd!==cpu && ((cmd==="rock"&&cpu==="scissors")||(cmd==="paper"&&cpu==="rock")||(cmd==="scissors"&&cpu==="paper"))) {
-      playerScore++;
-      print("Point to you!");
-    }
-    else if(cmd!==cpu) {
-      cpuScore++;
-      print("CPU scores!");
-    } else {
-      print("It's a tie!");
-    }
+      playerScore++; print("Point to you!");
+    } else if(cmd!==cpu) {
+      cpuScore++; print("CPU scores!");
+    } else { print("It's a tie!"); }
     print(`Score: You [${playerScore}] - CPU [${cpuScore}]`);
     if(playerScore>=scoreToWin || cpuScore>=scoreToWin){ 
         print(playerScore>=scoreToWin?"\n🏆 VICTORY! Match over.":"\n💀 DEFEAT! Match over."); 
@@ -223,7 +259,6 @@ function handleCommand(cmd, original) {
     return;
   }
 
-  // GAME 1: GUESSING DIFFICULTY
   if(gameState==="difficulty"){
     if(cmd==="easy"){ maxNumber=10; triesLeft=5; }
     else if(cmd==="normal"){ maxNumber=50; triesLeft=7; }
@@ -234,7 +269,6 @@ function handleCommand(cmd, original) {
     return;
   }
 
-  // GAME 1: GUESSING PLAYING
   if(gameState==="playing" && !isNaN(cmd)){
     let guess = parseInt(cmd); triesLeft--;
     if(guess === numberToGuess){ print("🎉 Data Match! Correct."); gameState="idle"; }
@@ -243,7 +277,6 @@ function handleCommand(cmd, original) {
     return;
   }
 
-  // GAME 3: HANGMAN PLAYING
   if(hangmanState){
     if(cmd === hWord){ 
         print(`🎉 ACCESS GRANTED! The word was ${hWord.toUpperCase()}.`); 
@@ -254,65 +287,70 @@ function handleCommand(cmd, original) {
       if(hTries<=0){ 
           print(`💀 SYSTEM CRASH! The word was ${hWord.toUpperCase()}.`); 
           hangmanState=false; 
-      } else {
-          print(`Incorrect guess. Tries left: ${hTries}`);
-      }
+      } else { print(`Incorrect guess. Tries left: ${hTries}`); }
     }
     return;
   }
 
-  // STANDARD COMMANDS
   if(cmd.startsWith("hostname ")) {
-      let newName = original.split(" ")[1];
+      let newName = args[1];
       if(newName) {
           userName = newName;
           localStorage.setItem("termUserName", userName);
           promptEle.innerText = `${userName}@terminal:~$`;
           print(`Identity confirmed. Welcome, ${userName}.`);
+          syncProfile();
       }
   }
   else if(cmd === "theme") {
     print(`Available Presets: ${Object.keys(themes).join(", ")}`);
-    print(`Usage: theme [name] OR theme [#hexcode]`);
   }
   else if(cmd.startsWith("theme ")){
-    let choice = cmd.split(" ")[1];
+    let choice = args[1];
     if(themes[choice]){ applyTheme(themes[choice].color, themes[choice].bg); print(`Neural link established. Theme: ${choice}.`); }
     else if(choice.startsWith("#")){ applyTheme(choice); print(`Custom frequency ${choice} applied.`); }
   }
   else if(cmd==="help"){
     print(`<b>SYSTEM COMMANDS:</b>`);
-    print(`- help: Display this menu`);
-    print(`- clear: Reset terminal buffer`);
-    print(`- matrix: Toggle digital rain`);
-    print(`- theme: Change visual interface`);
-    print(`- hostname [name]: Update user ID`);
-    print(`- weather: Fetch global weather data`);
-    print(`- weatherloc: Auto-detect local weather`);
-    print(`- game1: Number Guessing`);
-    print(`- game2: Rock Paper Scissors`);
-    print(`- game3: Word Hangman`);
+    print(`- register/login [email] [pass]`);
+    print(`- logout / whoami / profile`);
+    print(`- clear / matrix`);
+    print(`- theme / hostname [name]`);
+    print(`- weather / weatherloc / game1 / game2 / game3`);
   }
   else if(cmd==="clear") output.innerHTML = banner;
   else if(cmd==="matrix") startMatrix();
-  else if(cmd==="weather") { print("Target city name?"); weatherState = true; }
-  else if(cmd==="weatherloc"){
-    print("<i>[SYSTEM] Scanning GPS coordinates...</i>");
-    if(navigator.geolocation){
-        navigator.geolocation.getCurrentPosition(pos => {
-            fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&units=metric&appid=${API_KEY}`)
-            .then(res => res.json()).then(data => {
-                print(`<b>Local Weather: ${data.name}</b>`);
-                print(`> Temperature: ${data.main.temp}°C`);
-                print(`> Humidity: ${data.main.humidity}%`);
-                print(`> Wind Speed: ${data.wind.speed} m/s`);
-                print(`> Sky: ${data.weather[0].description}`);
-            });
-        }, () => print("Error: Location access denied."));
+  else if(cmd==="whoami"){
+    if(currentUser) print(`Logged in as: ${currentUser.email}`);
+    else print("Current Status: Guest");
+  }
+  else if(cmd==="profile"){
+    if(!currentUser) { print("Error: Access denied. Please login."); return; }
+    print(`<b>USER PROFILE:</b>`);
+    print(`> ID: ${currentUser.id.substring(0,8)}...`);
+    print(`> Email: ${currentUser.email}`);
+    print(`> Handle: ${userName}`);
+    print(`> Theme: ${getComputedStyle(root).getPropertyValue('--term-color')}`);
+  }
+  // WEATHER COMMANDS
+  else if(cmd==="weather") { 
+    print("Target city name?"); 
+    weatherState = true; 
+  }
+  else if(cmd==="weatherloc") {
+    if (navigator.geolocation) {
+      print("<i>[SYSTEM] Scanning local coordinates...</i>");
+      navigator.geolocation.getCurrentPosition((pos) => {
+        fetchWeather(`lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`);
+      }, () => {
+        print("Error: Location access denied by user.");
+      });
+    } else {
+      print("Error: Geolocation not supported by this browser.");
     }
   }
-  else if(cmd==="game1") { gameState="difficulty"; print("Launch [GUESS]. Select difficulty: easy/normal/hard"); }
-  else if(cmd==="game2") { rpsDifficulty=true; print("Launch [RPS]. Select difficulty: easy/normal/hard"); }
+  else if(cmd==="game1") { gameState="difficulty"; print("Launch [GUESS]. easy/normal/hard"); }
+  else if(cmd==="game2") { rpsDifficulty=true; print("Launch [RPS]. easy/normal/hard"); }
   else if(cmd==="game3") {
     hWord = hWords[Math.floor(Math.random()*hWords.length)]; hTries=6;
     hDisplay = hWord.split('').map((l,i)=>i%2==0?l:"_").join(" ");
@@ -343,10 +381,11 @@ function startMatrix() {
             drops[i]++;
         });
     }
-    matrixInterval = setInterval(draw, 33);
+    const matrixInterval = setInterval(draw, 33);
     canvas.onclick = () => { clearInterval(matrixInterval); canvas.style.display = "none"; };
 }
 
+checkSession();
 document.addEventListener("click", () => input.focus());
 </script>
 </body>
